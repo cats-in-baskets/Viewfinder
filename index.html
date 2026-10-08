@@ -1,0 +1,1248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Viewfinder</title>
+<meta name="description" content="Scout photo locations around you: landmarks, hidden gems, viewpoints, waterfalls, street art and more.">
+<meta name="theme-color" content="#0f1218">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: scouting panel on the left (search, light, filters, spots), live map on the right, spot drawer slides over the map. Stacks to search → map → list on phones. */
+:root{
+  --bg:#0f1218; --surface:#161a22; --raised:#1e232d; --line:#2a303c;
+  --fg:#ece9e3; --muted:#959cab; --faint:#646b7b;
+  --accent:#f3a43b; --accent-ink:#1b1206; --accent-soft:rgba(243,164,59,.14);
+  --blue:#7aa8ff; --blue-soft:rgba(122,168,255,.14);
+  --night:#232838; --daylight:#3a4152; --warn:#ff8a7a;
+  --shadow:0 12px 32px rgba(0,0,0,.45);
+  --f-display:"Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --f-body:"Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#eceff3; --surface:#ffffff; --raised:#f3f5f8; --line:#dde1e8;
+    --fg:#141821; --muted:#5b6372; --faint:#9aa1ad;
+    --accent:#c97412; --accent-ink:#ffffff; --accent-soft:rgba(201,116,18,.12);
+    --blue:#2f66d6; --blue-soft:rgba(47,102,214,.11);
+    --night:#cfd5e2; --daylight:#e9ecf2; --warn:#c2412d;
+    --shadow:0 12px 32px rgba(20,24,33,.14);
+    color-scheme:light;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 var(--f-body);-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:none;border:0;cursor:pointer;padding:0}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+svg{flex:none}
+
+.app{display:grid;grid-template-columns:minmax(360px,440px) minmax(0,1fr);height:100%}
+.panel{display:flex;flex-direction:column;min-height:0;background:var(--surface);border-right:1px solid var(--line);z-index:2}
+.head{padding:18px 20px 16px;display:flex;flex-direction:column;gap:14px;border-bottom:1px solid var(--line);background:var(--surface)}
+.brandrow{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.brand{display:flex;align-items:center;gap:10px}
+.brand svg{width:28px;height:28px;color:var(--accent)}
+.brand h1{font:800 23px/1 var(--f-display);letter-spacing:-.025em;margin:0}
+.tabs{display:flex;background:var(--raised);border:1px solid var(--line);border-radius:999px;padding:3px}
+.tab{padding:6px 12px;border-radius:999px;font-size:13px;font-weight:600;color:var(--muted);display:flex;gap:6px;align-items:center}
+.tab[aria-selected="true"]{background:var(--fg);color:var(--bg)}
+.tab .n{font:500 11px var(--f-mono)}
+
+.search{position:relative}
+.search input{width:100%;height:46px;border-radius:12px;border:1px solid var(--line);background:var(--raised);padding:0 50px 0 42px;outline:none;font-size:15px}
+.search input::placeholder{color:var(--faint)}
+.search input:focus{border-color:var(--accent)}
+.search .ico{position:absolute;left:14px;top:13px;width:20px;height:20px;color:var(--muted);pointer-events:none}
+.locate{position:absolute;right:5px;top:5px;width:36px;height:36px;border-radius:9px;display:grid;place-items:center;color:var(--accent);background:var(--accent-soft)}
+.locate svg{width:20px;height:20px}
+.locate.busy svg{animation:spin 1.4s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.sugg{position:absolute;left:0;right:0;top:52px;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);list-style:none;margin:0;padding:6px;z-index:1200;max-height:320px;overflow:auto}
+.sugg button{display:block;width:100%;text-align:left;padding:9px 10px;border-radius:8px;font-weight:600;font-size:14px}
+.sugg button:hover,.sugg button.active{background:var(--raised)}
+.sugg small{display:block;color:var(--muted);font-weight:400;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sugg .msg{padding:10px;color:var(--muted);font-size:13px}
+
+.locline{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);min-width:0}
+.locline svg{width:15px;height:15px;color:var(--accent)}
+.locline strong{color:var(--fg);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.locline .mono{font-size:11.5px;margin-left:auto;white-space:nowrap;color:var(--faint)}
+
+.radius{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:12px}
+input[type=range]{width:100%;accent-color:var(--accent);margin:0}
+.radius output{font:500 13px var(--f-mono);min-width:54px;text-align:right}
+.units{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.units button{font:500 11px var(--f-mono);padding:4px 7px;color:var(--muted)}
+.units button[aria-pressed="true"]{background:var(--raised);color:var(--fg)}
+
+.scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.section{padding:16px 20px;border-bottom:1px solid var(--line)}
+
+.sunhead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:10px}
+.sunhead .next{font-size:12.5px;font-weight:600;text-align:right}
+.stripwrap{position:relative}
+.strip{position:relative;height:12px;border-radius:4px;background:var(--night);overflow:hidden}
+.strip i{position:absolute;top:0;bottom:0}
+.strip .day{background:var(--daylight)}
+.strip .gold{background:var(--accent)}
+.strip .blue{background:var(--blue)}
+.now{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--fg);border-radius:2px}
+.ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);margin-top:5px}
+.sunrows{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:10px 0 0;font-size:12.5px}
+.sunrows dt{display:flex;align-items:center;gap:7px;color:var(--muted)}
+.sunrows dd{margin:0;font-family:var(--f-mono);font-variant-numeric:tabular-nums;font-size:12px}
+.sw{width:8px;height:8px;border-radius:2px;display:inline-block}
+.tz{font-size:11px;color:var(--faint);margin:8px 0 0}
+
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:7px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);font-size:13px;font-weight:500;color:var(--muted)}
+.chip .dot{width:8px;height:8px;border-radius:50%;background:var(--c,var(--fg))}
+.chip .n{font:11px var(--f-mono);color:var(--faint)}
+.chip:hover{color:var(--fg)}
+.chip[aria-pressed="true"]{border-color:var(--fg);color:var(--fg);background:var(--raised)}
+.row2{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.seg{display:flex;background:var(--raised);border:1px solid var(--line);border-radius:10px;padding:2px}
+.seg button{padding:6px 10px;font-size:12.5px;font-weight:600;color:var(--muted);border-radius:8px}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,.25)}
+select{margin-left:auto;background:var(--raised);border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:12.5px;font-weight:600}
+
+.status{padding:14px 20px 4px;font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.status b{color:var(--fg);font-weight:600}
+.status.err{color:var(--warn)}
+.status .link{color:var(--accent);font-weight:700;text-decoration:underline}
+.spinner{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite}
+
+.list{list-style:none;margin:0;padding:6px 10px 12px;display:flex;flex-direction:column;gap:2px}
+.card{position:relative;border-radius:14px}
+.card:hover,.card.hl{background:var(--raised)}
+.card-main{display:grid;grid-template-columns:104px minmax(0,1fr);gap:14px;align-items:center;width:100%;text-align:left;padding:8px 52px 8px 8px;border-radius:14px}
+.thumb{position:relative;width:104px;aspect-ratio:4/3;border-radius:10px;overflow:hidden;background:linear-gradient(140deg,color-mix(in srgb,var(--c) 30%,var(--raised)),var(--raised) 75%);display:grid;place-items:center;color:var(--c)}
+.thumb>svg{width:26px;height:26px;opacity:.85}
+.thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .35s}
+.thumb img.ok{opacity:1}
+.eyebrow{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.eyebrow::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c);flex:none}
+.card h3{font:600 16.5px/1.22 var(--f-display);margin:3px 0 5px;letter-spacing:-.01em;overflow-wrap:anywhere}
+.meta{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.meta .mono{font-size:11.5px}
+.meta .note{font-style:italic;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.badge{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:999px;letter-spacing:.02em;white-space:nowrap}
+.badge.pop{background:var(--accent-soft);color:var(--accent)}
+.badge.gem{background:var(--blue-soft);color:var(--blue)}
+.save{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:38px;height:38px;border-radius:10px;display:grid;place-items:center;color:var(--faint)}
+.save:hover{color:var(--fg);background:var(--surface)}
+.save[aria-pressed="true"]{color:var(--accent)}
+.save svg{width:20px;height:20px}
+[aria-pressed="true"]>.bm path{fill:currentColor}
+.more{display:block;margin:4px 20px 28px;width:calc(100% - 40px);padding:11px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);font-weight:600;font-size:13.5px}
+.more:hover{color:var(--fg);border-color:var(--muted)}
+.empty{padding:28px 22px;color:var(--muted);font-size:14px}
+.empty h3{font:600 18px/1.2 var(--f-display);color:var(--fg);margin:0 0 6px}
+
+.sk .thumb{background:var(--raised)}
+.sk .bar{display:block;height:10px;border-radius:5px;background:var(--raised);margin:6px 0}
+.sk .thumb,.sk .bar{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+
+.welcome{padding:30px 22px 40px}
+.welcome h2{font:800 30px/1.06 var(--f-display);letter-spacing:-.03em;margin:0 0 10px;text-wrap:balance}
+.welcome p{color:var(--muted);margin:0 0 20px;max-width:40ch}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 16px;border-radius:12px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:14px;text-decoration:none}
+.btn svg{width:18px;height:18px}
+.picks{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.picks .lbl{width:100%}
+
+.mapwrap{position:relative;min-height:0;min-width:0}
+#map{position:absolute;inset:0;background:var(--bg)}
+.areabtn{position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:600;box-shadow:var(--shadow);white-space:nowrap}
+.leaflet-container{font-family:var(--f-body);background:var(--bg)}
+.leaflet-bar a,.leaflet-bar a:hover{background:var(--surface);color:var(--fg);border-bottom-color:var(--line)}
+.leaflet-bar{border:1px solid var(--line)!important;box-shadow:var(--shadow)!important}
+.leaflet-control-layers{background:var(--surface)!important;color:var(--fg)!important;border:1px solid var(--line)!important;box-shadow:var(--shadow)!important;border-radius:10px!important}
+.leaflet-control-layers-expanded{padding:8px 12px!important;font-size:13px}
+.leaflet-control-attribution{background:color-mix(in srgb,var(--surface) 82%,transparent)!important;color:var(--muted)!important}
+.leaflet-control-attribution a{color:var(--muted)!important}
+.leaflet-tooltip.vf-tip{background:var(--surface);color:var(--fg);border:1px solid var(--line);box-shadow:var(--shadow);font-weight:600;font-size:12.5px;border-radius:8px;padding:5px 9px}
+.leaflet-tooltip.vf-tip::before{display:none}
+.cpin{width:34px;height:34px;color:var(--accent);filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))}
+.cpin svg{width:34px;height:34px}
+
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1400;opacity:0;pointer-events:none;transition:opacity .3s}
+.detail{position:fixed;top:0;right:0;bottom:0;width:min(500px,100%);background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--shadow);z-index:1500;overflow-y:auto;overscroll-behavior:contain;transform:translateX(105%);transition:transform .34s cubic-bezier(.2,.8,.2,1);visibility:hidden}
+.detail.open{transform:none;visibility:visible}
+.hero{position:relative;aspect-ratio:3/2;background:linear-gradient(140deg,color-mix(in srgb,var(--c) 28%,var(--raised)),var(--raised) 70%);overflow:hidden;display:grid;place-items:center;color:var(--c)}
+.hero>svg{width:48px;height:48px;opacity:.7}
+.hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;cursor:zoom-in}
+.hero .credit{position:absolute;left:0;right:0;bottom:0;padding:28px 16px 10px;background:linear-gradient(transparent,rgba(0,0,0,.72));color:#fff;font-size:11.5px;line-height:1.35}
+.hero .credit a{color:#fff}
+.hero .nophoto{position:absolute;left:16px;right:16px;bottom:14px;color:var(--muted);font-size:12.5px;text-align:center}
+.hero.loading{animation:pulse 1.4s ease-in-out infinite}
+.dtop{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));left:12px;right:12px;display:flex;justify-content:space-between;z-index:2}
+.round{width:40px;height:40px;border-radius:50%;background:rgba(12,14,19,.62);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);color:#fff;display:grid;place-items:center}
+.round svg{width:20px;height:20px}
+.round[aria-pressed="true"]{color:#f3a43b}
+.gallery{display:flex;gap:6px;overflow-x:auto;padding:10px 20px 2px;scrollbar-width:thin}
+.gallery button{flex:0 0 auto;width:74px;height:56px;border-radius:8px;overflow:hidden;opacity:.55;border:2px solid transparent;background:var(--raised)}
+.gallery button:hover{opacity:.85}
+.gallery button[aria-current="true"]{opacity:1;border-color:var(--accent)}
+.gallery img{width:100%;height:100%;object-fit:cover;display:block}
+.gcount{padding:6px 20px 0;font-size:11.5px;color:var(--faint)}
+.dbody{padding:18px 20px calc(30px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:20px}
+.dbody h2{font:800 30px/1.04 var(--f-display);letter-spacing:-.03em;margin:6px 0 4px;text-wrap:balance;overflow-wrap:anywhere}
+.dbody .alt{color:var(--muted);font-size:14px;margin:0 0 6px}
+.facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.facts>div{padding:10px 12px;border-right:1px solid var(--line);min-width:0;display:flex;flex-direction:column;gap:3px}
+.facts>div:last-child{border-right:0}
+.facts b,.facts button{font:500 12.5px var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.facts button{color:var(--accent)}
+.about{margin:0;max-width:65ch;line-height:1.6}
+.about.dim{color:var(--muted)}
+.box{background:var(--raised);border-radius:12px;padding:13px 15px;display:flex;flex-direction:column;gap:6px}
+.box.tip{background:var(--accent-soft)}
+.box p{margin:0;font-size:14px;line-height:1.55}
+.box .sunrows{margin-top:2px}
+.links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.links a{display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid var(--line);border-radius:11px;color:var(--fg);text-decoration:none;font-size:13.5px;font-weight:600;min-width:0}
+.links a span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.links a svg{width:17px;height:17px;color:var(--muted)}
+.links a:hover{border-color:var(--accent)}
+.links a.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.links a.primary svg{color:var(--accent-ink)}
+textarea{width:100%;min-height:84px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;resize:vertical;font-size:14px;outline:none}
+textarea:focus{border-color:var(--accent)}
+.credits{font-size:11.5px;color:var(--faint);margin:0;line-height:1.5}
+.credits a{color:var(--muted)}
+
+.lb{position:fixed;inset:0;background:rgba(6,7,10,.95);z-index:3000;display:flex;flex-direction:column;color:#f1f1f1}
+.lb .stage{position:relative;flex:1;min-height:0;display:grid;place-items:center;padding:56px 12px 8px}
+.lb img{max-width:100%;max-height:100%;object-fit:contain}
+.lb .x{position:absolute;top:calc(10px + env(safe-area-inset-top,0px));right:12px}
+.lb .nav{position:absolute;top:50%;transform:translateY(-50%)}
+.lb .prev{left:12px}.lb .next{right:12px}
+.lb .cap{padding:10px 18px calc(16px + env(safe-area-inset-bottom,0px));font-size:12.5px;color:#cfd2d8;text-align:center}
+.lb .cap a{color:#fff}
+
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translate(-50%,16px);opacity:0;background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:13px;font-weight:600;z-index:4000;transition:all .25s;pointer-events:none}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+@media (max-width:820px){
+  html,body{height:auto}
+  .app{display:flex;flex-direction:column;height:auto;min-height:100%}
+  .panel{display:contents}
+  .head{order:0;padding:14px 16px}
+  .mapwrap{order:1;height:44vh;min-height:280px;border-block:1px solid var(--line)}
+  .scroll{order:2;overflow:visible;background:var(--surface);flex:none}
+  .section,.status{padding-inline:16px}
+  .list{padding-inline:6px}
+  .detail{width:100%;border-left:0}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .welcome h2{font-size:26px}
+}
+@media (max-width:380px){
+  .card-main{grid-template-columns:84px minmax(0,1fr);gap:12px}
+  .thumb{width:84px}
+  .links{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <div class="head">
+      <div class="brandrow">
+        <div class="brand">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M4 11V4h7M21 4h7v7M28 21v7h-7M11 28H4v-7"/><circle cx="16" cy="16" r="4.6" fill="currentColor" stroke="none"/></svg>
+          <h1>Viewfinder</h1>
+        </div>
+        <div class="tabs" role="tablist" aria-label="View">
+          <button class="tab" role="tab" id="tab-explore" aria-selected="true">Explore</button>
+          <button class="tab" role="tab" id="tab-saved" aria-selected="false">Saved <span class="n" id="savedCount">0</span></button>
+        </div>
+      </div>
+      <div class="search">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="q" type="search" placeholder="Search a place or enter coordinates" autocomplete="off" aria-label="Search a place or enter coordinates" aria-autocomplete="list" aria-controls="sugg">
+        <button class="locate" id="locate" aria-label="Use my current location" title="Use my current location">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        </button>
+        <ul class="sugg" id="sugg" role="listbox" hidden></ul>
+      </div>
+      <div class="locline" id="locline" hidden></div>
+      <div class="radius">
+        <label class="lbl" for="radius">Radius</label>
+        <input type="range" id="radius" min="1" max="100" step="1" value="50">
+        <output id="radiusOut" class="mono" for="radius">50 km</output>
+        <div class="units" role="group" aria-label="Distance units">
+          <button id="u-km" aria-pressed="true">km</button><button id="u-mi" aria-pressed="false">mi</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="scroll" id="scroll">
+      <div id="explore">
+        <section class="section" id="sun" hidden></section>
+        <section class="section" id="filters" hidden>
+          <div class="chips" id="chips"></div>
+          <div class="row2">
+            <div class="seg" role="group" aria-label="Spot type">
+              <button data-kind="all" aria-pressed="true">All</button>
+              <button data-kind="pop" aria-pressed="false">Landmarks</button>
+              <button data-kind="gem" aria-pressed="false">Hidden gems</button>
+            </div>
+            <select id="sort" aria-label="Sort spots">
+              <option value="best">Best picks</option>
+              <option value="near">Nearest</option>
+              <option value="az">A–Z</option>
+            </select>
+          </div>
+        </section>
+        <div class="status" id="status" aria-live="polite"></div>
+        <ul class="list" id="list"></ul>
+        <button class="more" id="more" hidden>Show more spots</button>
+      </div>
+      <div id="savedView" hidden>
+        <div class="status" id="savedStatus"></div>
+        <ul class="list" id="savedList"></ul>
+      </div>
+    </div>
+  </aside>
+
+  <main class="mapwrap">
+    <div id="map" aria-label="Map of photo spots"></div>
+    <button class="btn areabtn" id="areaBtn" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M3 12a9 9 0 0 1 15.5-6.2M21 4v5h-5M21 12a9 9 0 0 1-15.5 6.2M3 20v-5h5"/></svg>
+      Search this area
+    </button>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="detail" id="detail" aria-label="Spot details" aria-hidden="true"></aside>
+<div class="lb" id="lb" hidden></div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/suncalc@1.9.0/suncalc.js"></script>
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const LANG = (navigator.language || 'en').split('-')[0];
+
+/* ---------- icons ---------- */
+const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${d}</svg>`;
+const ICON = {
+  viewpoint: svg('<path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>'),
+  landscape: svg('<path d="M2.5 19.5 9 9.5l4 6 2.8-4 5.7 8z"/><circle cx="17" cy="6" r="2"/>'),
+  water: svg('<path d="M2 9c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2M2 15c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2"/>'),
+  urban: svg('<path d="M3 21h18M5 21V9l5-3v15M10 21V4l7 3v14M17 21v-8l3 1.5V21"/>'),
+  history: svg('<path d="M3 21h18M5 21V10.5M9.7 21V10.5M14.3 21V10.5M19 21V10.5M2.5 10.5 12 4.5l9.5 6z"/>'),
+  art: svg('<path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.9 0-1.3-1.1-1.8-.3-2.8.9-1 3-.1 5-1.1C20.4 14.5 21 13 21 11.6 21 6.8 17 3 12 3z"/><circle cx="7.5" cy="11.5" r="1"/><circle cx="10" cy="7.5" r="1"/><circle cx="15" cy="7.8" r="1"/>'),
+  bookmark: svg('<path d="M6.5 3.5h11v17l-5.5-4-5.5 4z"/>', 'class="bm"'),
+  close: svg('<path d="M6 6l12 12M18 6 6 18"/>'),
+  pin: svg('<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>'),
+  locate: svg('<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'),
+  route: svg('<path d="M5 19 19 5M19 5h-7M19 5v7"/>'),
+  images: svg('<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5-5 4 4 3-3 4 4"/>'),
+  camera: svg('<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'),
+  book: svg('<path d="M4 4.5h6a2 2 0 0 1 2 2V20a2 2 0 0 0-2-2H4zM20 4.5h-6a2 2 0 0 0-2 2V20a2 2 0 0 1 2-2h6z"/>'),
+  map: svg('<path d="M9 4 3 6.5v13L9 17l6 2.5 6-2.5v-13L15 6.5zM9 4v13M15 6.5v13"/>'),
+  cross: `<svg viewBox="0 0 34 34" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="17" cy="17" r="8"/><circle cx="17" cy="17" r="2.4" fill="currentColor"/><path d="M17 2v6M17 26v6M2 17h6M26 17h6"/></svg>`,
+  chevL: svg('<path d="m15 5-7 7 7 7"/>'),
+  chevR: svg('<path d="m9 5 7 7-7 7"/>')
+};
+
+const CATS = {
+  viewpoint: { label: 'Viewpoints', color: '#f3a43b' },
+  landscape: { label: 'Landscape', color: '#6fc27a' },
+  water: { label: 'Water & coast', color: '#3fb8cf' },
+  urban: { label: 'Urban & architecture', color: '#a08bff' },
+  history: { label: 'History & ruins', color: '#e07a52' },
+  art: { label: 'Street art & culture', color: '#ec6fa9' }
+};
+
+/* ---------- state ---------- */
+const S = {
+  center: null, place: '', mine: false,
+  radiusKm: store.get('vf.radius', 50), unit: store.get('vf.unit', 'km'),
+  spots: [], index: new Map(), cats: new Set(), kind: 'all', sort: 'best', shown: 60,
+  saved: store.get('vf.saved', {}), tab: 'explore',
+  loading: false, note: '', msg: null, reqId: 0
+};
+const resultCache = new Map();
+
+/* ---------- geo helpers ---------- */
+const toRad = d => d * Math.PI / 180;
+function dist(a, b) {
+  const R = 6371000, dLat = toRad(b.lat - a.lat), dLon = toRad(b.lon - a.lon);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearing(a, b) {
+  const y = Math.sin(toRad(b.lon - a.lon)) * Math.cos(toRad(b.lat));
+  const x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat)) - Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lon - a.lon));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+const compass = deg => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];
+function fmtDist(m) {
+  if (S.unit === 'mi') {
+    const mi = m / 1609.344;
+    return mi < 0.2 ? `${Math.max(10, Math.round(m * 3.281 / 10) * 10)} ft` : `${mi.toFixed(mi < 10 ? 1 : 0)} mi`;
+  }
+  return m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0)} km`;
+}
+const fmtRadius = km => S.unit === 'mi' ? `${Math.round(km / 1.609344)} mi` : `${km} km`;
+const placeDist = s => S.center ? `${fmtDist(dist(S.center, s))} ${compass(bearing(S.center, s))}` : '';
+
+/* ---------- network ---------- */
+async function fetchJSON(url, opts = {}, ms = 20000) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    const r = await fetch(url, { ...opts, signal: ac.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+const queue = []; let active = 0;
+function enqueue(fn) { return new Promise((res, rej) => { queue.push({ fn, res, rej }); pump(); }); }
+function pump() {
+  while (active < 4 && queue.length) {
+    const j = queue.shift(); active++;
+    j.fn().then(j.res, j.rej).finally(() => { active--; pump(); });
+  }
+}
+
+/* ---------- OpenStreetMap discovery ---------- */
+const OVERPASS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+];
+function buildQuery(lat, lon, r) {
+  const a = `(around:${r},${lat.toFixed(5)},${lon.toFixed(5)})`;
+  return `[out:json][timeout:90];
+(
+  nwr[tourism~"^(attraction|viewpoint|artwork|museum|gallery)$"]${a};
+  nwr[historic~"^(castle|ruins|monument|fort|archaeological_site|manor|tower|city_gate|ship|wreck|aircraft|locomotive|aqueduct|bridge|lighthouse|citywalls|palace|mine|windmill)$"][name]${a};
+  nwr[historic~"^(church|memorial|building|monastery|chapel)$"][wikidata]${a};
+  nwr[natural~"^(peak|beach|cliff|cave_entrance|arch|volcano|glacier|gorge|rock|stone|bay|cape|dune|hot_spring|waterfall)$"][name]${a};
+  nwr[waterway=waterfall]${a};
+  nwr[natural=waterfall]${a};
+  nwr[man_made~"^(lighthouse|pier|tower|bridge|windmill|watermill|water_tower|observatory|dam|obelisk)$"][name]${a};
+  way[bridge][wikidata]${a};
+  nwr[amenity=place_of_worship][wikidata]${a};
+  nwr[leisure~"^(park|garden|nature_reserve)$"][wikidata]${a};
+  nwr[boundary~"^(national_park|protected_area)$"][wikidata]${a};
+  nwr[railway=station][wikidata]${a};
+  nwr[place=square][name]${a};
+)->.a;
+node.a; out qt 1800;
+(way.a; rel.a;); out tags center qt 900;`;
+}
+async function overpass(q) {
+  let last;
+  for (const u of OVERPASS) {
+    try {
+      return await fetchJSON(u, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }, body: 'data=' + encodeURIComponent(q) }, 100000);
+    } catch (e) { last = e; }
+  }
+  throw last;
+}
+
+const NICE = { place_of_worship: 'Place of worship', cave_entrance: 'Cave', archaeological_site: 'Archaeological site', national_park: 'National park', protected_area: 'Protected area', nature_reserve: 'Nature reserve', city_gate: 'City gate', water_tower: 'Water tower', station: 'Railway station', attraction: 'Attraction', citywalls: 'City walls', hot_spring: 'Hot spring', viewpoint: 'Viewpoint' };
+const pretty = v => NICE[v] || String(v).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+function typeLabel(t) {
+  if (t.waterway === 'waterfall') return 'Waterfall';
+  if (t.tourism === 'artwork') return t.artwork_type ? pretty(t.artwork_type.split(';')[0]) : 'Artwork';
+  for (const k of ['tourism', 'historic', 'natural', 'man_made', 'leisure', 'boundary', 'railway', 'place']) {
+    const v = t[k];
+    if (!v || v === 'yes') continue;
+    if (k === 'tourism' && v === 'attraction' && (t.historic || t.natural || t.man_made)) continue;
+    return pretty(v.split(';')[0]);
+  }
+  if (t.amenity === 'place_of_worship') return t.building && t.building !== 'yes' ? pretty(t.building) : 'Place of worship';
+  if (t.bridge) return 'Bridge';
+  return 'Place';
+}
+function classify(t) {
+  if (t.tourism === 'viewpoint') return 'viewpoint';
+  if (/^(beach|bay|cape|waterfall|hot_spring|glacier)$/.test(t.natural || '') || t.waterway === 'waterfall' || /^(lighthouse|pier|dam)$/.test(t.man_made || '') || t.historic === 'lighthouse') return 'water';
+  if (t.historic || /^(windmill|watermill)$/.test(t.man_made || '')) return 'history';
+  if (t.natural || t.leisure === 'nature_reserve' || t.boundary) return 'landscape';
+  if (/^(artwork|museum|gallery)$/.test(t.tourism || '')) return 'art';
+  if (t.leisure === 'park' || t.leisure === 'garden') return 'landscape';
+  return 'urban';
+}
+function keep(t) {
+  const named = !!(t.name || t['name:en']);
+  if (t['tower:type'] === 'communication' && !t.wikidata) return false;
+  if (t.tourism === 'viewpoint' || t.waterway === 'waterfall' || t.natural === 'waterfall') return true;
+  if (t.tourism === 'artwork') return named || /mural|graffiti|sculpture|installation|street/.test(t.artwork_type || '');
+  return named;
+}
+const isPopular = t => !!(t.wikipedia || (t.wikidata && (t.tourism === 'attraction' || t.tourism === 'museum' || t.heritage || /^(castle|palace)$/.test(t.historic || ''))));
+function toSpot(el) {
+  const t = el.tags || {};
+  const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+  if (lat == null || lon == null || !keep(t)) return null;
+  const type = typeLabel(t);
+  const named = !!(t.name || t['name:en']);
+  const name = t.name || t['name:en'] || type;
+  return {
+    id: el.type[0] + el.id, name, alt: t['name:en'] && t['name:en'] !== name ? t['name:en'] : '',
+    unnamed: !named, lat, lon, tags: t, cat: classify(t), type, popular: isPopular(t)
+  };
+}
+function dedupe(arr) {
+  const seen = new Set(), out = [];
+  for (const s of arr) {
+    const k = s.tags.wikidata || (s.unnamed ? null : s.name.toLowerCase() + '|' + s.lat.toFixed(3) + '|' + s.lon.toFixed(3));
+    if (k) { if (seen.has(k)) continue; seen.add(k); }
+    out.push(s);
+  }
+  return out;
+}
+const STAR = /^(waterfall|lighthouse|castle|ruins|peak|arch|cliff|viewpoint|palace|fort|beach|cave_entrance|bridge|windmill|glacier|gorge|volcano|pier|mural|graffiti)$/;
+function score(s, Rm) {
+  const t = s.tags; let v = 0;
+  if (t.wikipedia) v += 3;
+  if (t.wikidata) v += 2;
+  if (t.tourism === 'attraction') v += 1.5;
+  if (t.tourism === 'viewpoint') v += 2;
+  if (t.image || t.wikimedia_commons) v += 1;
+  if (t.heritage) v += 1;
+  for (const k of ['natural', 'man_made', 'historic', 'waterway', 'tourism', 'artwork_type']) if (STAR.test(t[k] || '')) { v += 1.5; break; }
+  if (s.unnamed) v -= 1.5;
+  return v - (s.dist / Rm) * 2;
+}
+async function wikiFallback(c) {
+  const j = await fetchJSON(`https://en.wikipedia.org/w/api.php?action=query&list=geosearch&gscoord=${c.lat}%7C${c.lon}&gsradius=10000&gslimit=100&format=json&origin=*`);
+  return (j.query?.geosearch || []).map(g => ({
+    id: 'w' + g.pageid, name: g.title, alt: '', unnamed: false, lat: g.lat, lon: g.lon,
+    tags: { name: g.title, wikipedia: 'en:' + g.title }, cat: 'urban', type: 'Wikipedia place', popular: true
+  }));
+}
+
+async function loadSpots() {
+  if (!S.center) return;
+  const id = ++S.reqId;
+  const c = { ...S.center }, Rm = Math.round(S.radiusKm * 1000);
+  const key = `${c.lat.toFixed(4)},${c.lon.toFixed(4)},${Rm}`;
+  S.loading = true; S.spots = []; S.index = new Map(); S.shown = 60; S.note = ''; S.msg = null;
+  renderExplore();
+  let spots = resultCache.get(key), note = '';
+  if (!spots) {
+    try {
+      const j = await overpass(buildQuery(c.lat, c.lon, Rm));
+      spots = (j.elements || []).map(toSpot).filter(Boolean);
+      resultCache.set(key, spots);
+    } catch {
+      try { spots = await wikiFallback(c); note = 'fallback'; } catch { spots = []; note = 'fail'; }
+    }
+  }
+  if (id !== S.reqId) return;
+  spots = dedupe(spots);
+  for (const s of spots) { s.dist = dist(c, s); s.score = score(s, Rm); }
+  spots = spots.filter(s => s.dist <= Rm * 1.05);
+  S.spots = spots; S.index = new Map(spots.map(s => [s.id, s]));
+  S.loading = false; S.note = note;
+  renderExplore();
+}
+
+/* ---------- photos (Wikimedia Commons / Wikidata / Wikipedia) ---------- */
+const stripHTML = h => { if (!h) return ''; const d = new DOMParser().parseFromString(h, 'text/html'); return (d.body.textContent || '').replace(/\s+/g, ' ').trim(); };
+const sized = (url, w) => url ? url.replace(/\/(\d+)px-/, `/${w}px-`) : url;
+const filePath = (name, w) => `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(name.replace(/ /g, '_'))}?width=${w}`;
+function fileFromTags(t) {
+  const c = t.wikimedia_commons || '';
+  if (/^File:/i.test(c)) return c.slice(5);
+  const i = t.image || '';
+  if (/^File:/i.test(i)) return i.slice(5);
+  const m = i.match(/commons\.wikimedia\.org\/wiki\/File:([^?#]+)/i);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function radiusFor(s) {
+  const t = s.tags;
+  if (t.tourism === 'artwork') return 60;
+  if (t.natural === 'peak' || t.boundary || t.leisure === 'nature_reserve') return 600;
+  return { viewpoint: 250, landscape: 450, water: 300, urban: 150, history: 200, art: 100 }[s.cat] || 200;
+}
+async function commonsQuery(params, w) {
+  const base = `https://commons.wikimedia.org/w/api.php?action=query&format=json&origin=*&prop=imageinfo&iiprop=url%7Cmime%7Cextmetadata&iiextmetadatafilter=Artist%7CLicenseShortName%7CObjectName&iiurlwidth=${w}&`;
+  const j = await fetchJSON(base + params);
+  const pages = Object.values(j?.query?.pages || {}).sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  return pages.map(p => {
+    const ii = p.imageinfo?.[0];
+    if (!ii || !/image\/(jpeg|png|webp)/.test(ii.mime || '')) return null;
+    const m = ii.extmetadata || {};
+    return {
+      title: p.title, thumb: ii.thumburl || ii.url, full: ii.thumburl || ii.url, page: ii.descriptionurl,
+      artist: (stripHTML(m.Artist?.value) || 'Unknown photographer').slice(0, 80),
+      license: stripHTML(m.LicenseShortName?.value) || ''
+    };
+  }).filter(Boolean);
+}
+const commonsNear = (lat, lon, r, n, w) => commonsQuery(`generator=geosearch&ggscoord=${lat}%7C${lon}&ggsradius=${Math.round(Math.min(10000, Math.max(10, r)))}&ggslimit=${n}&ggsnamespace=6`, w).then(a => a.map(x => ({ ...x, src: 'near' })));
+const commonsCategory = (cat, n, w) => commonsQuery(`generator=categorymembers&gcmtitle=${encodeURIComponent('Category:' + cat)}&gcmtype=file&gcmlimit=${n}`, w).then(a => a.map(x => ({ ...x, src: 'tagged' })));
+const commonsFiles = (names, w) => commonsQuery(`titles=${encodeURIComponent(names.map(n => 'File:' + n).join('|'))}`, w).then(a => a.map(x => ({ ...x, src: 'tagged' })));
+async function wdImage(q) {
+  const j = await fetchJSON(`https://www.wikidata.org/w/api.php?action=wbgetclaims&entity=${q}&property=P18&format=json&origin=*`);
+  return j?.claims?.P18?.[0]?.mainsnak?.datavalue?.value || null;
+}
+async function wdEntity(q) {
+  const j = await fetchJSON(`https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${q}&props=claims%7Csitelinks%7Cdescriptions&languages=en&sitefilter=enwiki&format=json&origin=*`);
+  return j?.entities?.[q] || null;
+}
+const claim = (e, p) => e?.claims?.[p]?.[0]?.mainsnak?.datavalue?.value || null;
+async function wikiSummary(lang, title) {
+  return fetchJSON(`https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title.replace(/ /g, '_'))}`);
+}
+
+const thumbCache = new Map();
+async function resolveThumb(s) {
+  const t = s.tags;
+  const f = fileFromTags(t);
+  if (f) return filePath(f, 330);
+  if (/^https?:\/\/.+\.(jpe?g|png|webp)(\?.*)?$/i.test(t.image || '')) return t.image;
+  if (t.wikidata) { try { const fn = await wdImage(t.wikidata); if (fn) return filePath(fn, 330); } catch {} }
+  if (t.wikipedia && s.id.startsWith('w')) {
+    try { const sum = await wikiSummary('en', t.name); if (sum?.thumbnail?.source) return sum.thumbnail.source; } catch {}
+  }
+  const near = await commonsNear(s.lat, s.lon, radiusFor(s), 3, 330);
+  return near[0]?.thumb || null;
+}
+function getThumb(s) {
+  if (!thumbCache.has(s.id)) thumbCache.set(s.id, enqueue(() => resolveThumb(s)).catch(() => null));
+  return thumbCache.get(s.id);
+}
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); fillThumb(e.target); }
+}, { rootMargin: '250px' });
+function fillThumb(el) {
+  const s = S.index.get(el.dataset.thumb) || S.saved[el.dataset.thumb];
+  if (!s) return;
+  getThumb(s).then(url => {
+    if (!url || !el.isConnected || el.querySelector('img')) return;
+    const img = new Image();
+    img.alt = ''; img.decoding = 'async';
+    img.onload = () => img.classList.add('ok');
+    img.onerror = () => img.remove();
+    img.src = url;
+    el.appendChild(img);
+  });
+}
+
+/* ---------- light (sun times) ---------- */
+const fmtT = d => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const rng = w => w ? `${fmtT(w[0])}–${fmtT(w[1])}` : '—';
+function sunInfo(lat, lon) {
+  if (!window.SunCalc) return null;
+  const t = SunCalc.getTimes(new Date(), lat, lon);
+  const ok = d => d instanceof Date && !isNaN(d);
+  const win = (a, b) => ok(a) && ok(b) && b > a ? [a, b] : null;
+  return { t, ok, blueAM: win(t.dawn, t.sunrise), goldAM: win(t.sunrise, t.goldenHourEnd), day: win(t.goldenHourEnd, t.goldenHour), goldPM: win(t.goldenHour, t.sunset), bluePM: win(t.sunset, t.dusk) };
+}
+function dur(ms) { const m = Math.round(ms / 60000), h = Math.floor(m / 60); return h ? `${h} h ${m % 60} min` : `${m} min`; }
+function nextLight(i) {
+  const now = Date.now();
+  const ev = [['Morning blue hour', i.blueAM], ['Morning golden hour', i.goldAM], ['Evening golden hour', i.goldPM], ['Evening blue hour', i.bluePM]].filter(e => e[1]);
+  for (const [n, [a, b]] of ev) {
+    if (now >= a && now < b) return `${n} now, until ${fmtT(b)}`;
+    if (now < a) return `${n} in ${dur(a - now)}`;
+  }
+  return ev.length ? 'Next golden hour tomorrow morning' : 'No golden hour today at this latitude';
+}
+function sunRows(i) {
+  return `<dl class="sunrows">
+    <dt><span class="sw" style="background:var(--blue)"></span>Blue hour</dt><dd>${rng(i.blueAM)} · ${rng(i.bluePM)}</dd>
+    <dt><span class="sw" style="background:var(--accent)"></span>Golden hour</dt><dd>${rng(i.goldAM)} · ${rng(i.goldPM)}</dd>
+    <dt><span class="sw" style="background:var(--daylight);outline:1px solid var(--line)"></span>Sunrise · sunset</dt><dd>${i.ok(i.t.sunrise) ? fmtT(i.t.sunrise) : '—'} · ${i.ok(i.t.sunset) ? fmtT(i.t.sunset) : '—'}</dd>
+  </dl>`;
+}
+function renderSun() {
+  const el = $('#sun');
+  const i = S.center && sunInfo(S.center.lat, S.center.lon);
+  if (!i) { el.hidden = true; return; }
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const P = d => Math.max(0, Math.min(100, (d - d0) / 864e5 * 100));
+  let h = '';
+  const seg = (c, w) => { if (!w) return; const a = P(w[0]), b = P(w[1]); if (b > a) h += `<i class="${c}" style="left:${a}%;width:${b - a}%"></i>`; };
+  seg('day', i.day); seg('gold', i.goldAM); seg('gold', i.goldPM); seg('blue', i.blueAM); seg('blue', i.bluePM);
+  el.hidden = false;
+  el.innerHTML = `<div class="sunhead"><span class="lbl">Light today</span><span class="next">${esc(nextLight(i))}</span></div>
+    <div class="stripwrap"><div class="strip">${h}</div><span class="now" style="left:${P(new Date())}%"></span></div>
+    <div class="ticks mono"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+    ${sunRows(i)}<p class="tz">Times shown in your device's time zone.</p>`;
+}
+
+/* ---------- shooting notes ---------- */
+function tipFor(s) {
+  const t = s.tags, a = t.artwork_type || '';
+  if (t.waterway === 'waterfall' || t.natural === 'waterfall') return 'Bring an ND filter and a tripod: 0.5–2 second exposures turn the water to silk. Overcast days keep the highlights in check, and the days after rain give the most flow.';
+  if (t.man_made === 'lighthouse' || t.historic === 'lighthouse') return 'Blue hour with the lamp lit is the classic frame. A 20–30 second exposure streaks the clouds; check tide times if you want rocks in the foreground.';
+  if (t.man_made === 'pier') return 'Get low and centred for symmetry, or shoot from the beach at golden hour for silhouettes. Long exposures smooth the water around the pilings.';
+  if (t.tourism === 'viewpoint') return 'Arrive 30 minutes before golden hour to work out your composition. Pack a telephoto to compress distant layers as well as a wide lens.';
+  if (t.natural === 'peak' || t.natural === 'volcano') return 'Sunrise from the top means starting in the dark, so carry a headlamp and warm layers. Use ridgelines in the foreground to show scale.';
+  if (/^(beach|bay|cape|dune)$/.test(t.natural || '')) return 'Low tide reveals texture and reflections. Get low with foreground rocks and use a slower shutter to show wave motion at golden hour.';
+  if (/^(cliff|arch|gorge|rock|stone|glacier)$/.test(t.natural || '')) return 'Side light at golden hour brings out rock texture. Put a person in frame for scale, and stay well back from unstable edges.';
+  if (t.natural === 'cave_entrance') return 'Shoot from inside looking out to frame the daylight. A tripod and a torch for light painting help in the dark.';
+  if (t.tourism === 'artwork') return /mural|graffiti|street/.test(a) ? 'Shoot square-on with a 35–50 mm lens to keep lines straight. Open shade or cloud gives even colour; wait for a passer-by to add a story.' : 'Walk all the way around it. Try a low angle against the sky, or a long lens to separate it from the background.';
+  if (/^(castle|ruins|fort|archaeological_site|citywalls|palace|manor)$/.test(t.historic || '')) return 'Warm side light at golden hour makes stonework glow. Ruins also suit fog, and night-sky shots with a softly lit foreground.';
+  if (t.man_made === 'bridge' || t.bridge || t.historic === 'bridge') return 'Look for leading lines from the bank or from underneath. After dark, a 10–30 second exposure draws light trails across the deck.';
+  if (t.amenity === 'place_of_worship' || /^(church|chapel|monastery)$/.test(t.historic || '')) return 'Blue hour balances the exterior lighting with the sky. Inside, raise the ISO, keep verticals straight, and check whether photography is allowed.';
+  if (t.railway === 'station') return 'Use the symmetry of the hall, and a slow shutter to blur the crowds. Rush hour gives energy; early morning gives clean lines.';
+  if (t.leisure === 'park' || t.leisure === 'garden') return 'Early morning brings mist, soft light and empty paths. Come back by season: blossom, autumn colour and frost all change the scene.';
+  if (t.place === 'square') return 'Find a high vantage point for patterns of people, or shoot at street level at blue hour as the lights come on.';
+  if (t.tourism === 'museum' || t.tourism === 'gallery') return 'Check the photo policy first: many allow handheld shots without flash. The building itself is often the best subject.';
+  if (/^(windmill|watermill)$/.test(t.man_made || '') || t.historic === 'windmill') return 'Silhouette the sails against a sunset sky, or use a slow shutter if the sails are turning.';
+  if (/^(tower|observatory|water_tower|obelisk)$/.test(t.man_made || '')) return 'Shoot from the base with a wide lens for drama, or find it from across town with a long lens to stack it against the skyline.';
+  if (s.cat === 'landscape') return 'Golden hour and the first hour after rain are best. Use a wide lens with strong foreground interest and a polariser to cut glare.';
+  return 'Visit at golden hour and again at blue hour: the same place reads completely differently. Walk the whole site before setting up.';
+}
+
+/* ---------- rendering: list ---------- */
+function filtered() {
+  let a = S.spots;
+  if (S.kind === 'pop') a = a.filter(s => s.popular);
+  else if (S.kind === 'gem') a = a.filter(s => !s.popular);
+  const byKind = a;
+  if (S.cats.size) a = a.filter(s => S.cats.has(s.cat));
+  a = [...a];
+  if (S.sort === 'near') a.sort((x, y) => x.dist - y.dist);
+  else if (S.sort === 'az') a.sort((x, y) => x.name.localeCompare(y.name));
+  else a.sort((x, y) => y.score - x.score);
+  return { list: a, byKind };
+}
+function cardHTML(s) {
+  const c = CATS[s.cat] || CATS.urban, sv = !!S.saved[s.id];
+  return `<li class="card" data-id="${esc(s.id)}" style="--c:${c.color}">
+    <button class="card-main" data-open="${esc(s.id)}">
+      <div class="thumb" data-thumb="${esc(s.id)}">${ICON[s.cat] || ICON.urban}</div>
+      <div style="min-width:0">
+        <div class="eyebrow">${esc(s.type)}</div>
+        <h3>${esc(s.name)}</h3>
+        <div class="meta">${S.center ? `<span class="mono">${placeDist(s)}</span>` : ''}<span class="badge ${s.popular ? 'pop' : 'gem'}">${s.popular ? 'Landmark' : 'Hidden gem'}</span></div>
+        ${s.note ? `<div class="meta"><span class="note">“${esc(s.note.slice(0, 80))}”</span></div>` : ''}
+      </div>
+    </button>
+    <button class="save" data-save="${esc(s.id)}" aria-pressed="${sv}" aria-label="${sv ? 'Remove bookmark' : 'Bookmark this spot'}">${ICON.bookmark}</button>
+  </li>`;
+}
+function observeThumbs(root) { $$('[data-thumb]', root).forEach(el => io.observe(el)); }
+
+function renderLocline() {
+  const el = $('#locline');
+  if (!S.center) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = `${ICON.pin}<strong>${esc(S.mine ? (S.place ? 'Your location · ' + S.place : 'Your location') : (S.place || 'Finding place name…'))}</strong><span class="mono">${S.center.lat.toFixed(4)}, ${S.center.lon.toFixed(4)}</span>`;
+}
+function renderFilters() {
+  const el = $('#filters');
+  if (!S.center || (!S.spots.length && !S.loading)) { el.hidden = true; return; }
+  el.hidden = false;
+  const { byKind } = filtered();
+  const counts = {};
+  for (const s of byKind) counts[s.cat] = (counts[s.cat] || 0) + 1;
+  $('#chips').innerHTML = `<button class="chip" data-cat="" aria-pressed="${!S.cats.size}">All <span class="n">${byKind.length}</span></button>` +
+    Object.entries(CATS).map(([k, c]) => `<button class="chip" data-cat="${k}" style="--c:${c.color}" aria-pressed="${S.cats.has(k)}"><span class="dot"></span>${c.label} <span class="n">${counts[k] || 0}</span></button>`).join('');
+  $$('.seg button').forEach(b => b.setAttribute('aria-pressed', b.dataset.kind === S.kind));
+  $('#sort').value = S.sort;
+}
+const QUICK = [['Edinburgh', 55.9533, -3.1883], ['Lisbon', 38.7223, -9.1393], ['Yosemite Valley', 37.7456, -119.5936], ['Kyoto', 35.0116, 135.7681], ['Lofoten, Reine', 67.9326, 13.0886], ['Cape Town', -33.9249, 18.4241]];
+function renderStatusAndList() {
+  const st = $('#status'), list = $('#list'), more = $('#more');
+  st.className = 'status';
+  more.hidden = true;
+  if (!S.center) {
+    st.innerHTML = S.msg ? `<span>${esc(S.msg)}</span>` : '';
+    if (S.msg) st.classList.add('err');
+    list.innerHTML = `<li class="welcome">
+      <h2>Where are you shooting?</h2>
+      <p>Viewfinder scouts landmarks, hidden viewpoints, waterfalls, street art, ruins and more around any spot, with real photos from photographers on Wikimedia Commons.</p>
+      <button class="btn" data-act="locate">${ICON.locate}Use my location</button>
+      <div class="picks"><span class="lbl">Or try</span>${QUICK.map(([n, la, lo]) => `<button class="chip" data-pick="${la},${lo}" data-name="${esc(n)}">${esc(n)}</button>`).join('')}</div>
+    </li>`;
+    return;
+  }
+  if (S.loading) {
+    st.innerHTML = `<span class="spinner"></span><span>Scouting ${fmtRadius(S.radiusKm)} around <b>${esc(S.place || 'this spot')}</b>. Large areas in big cities can take up to a minute.</span>`;
+    list.innerHTML = Array.from({ length: 6 }, () => `<li class="card sk"><div class="card-main"><div class="thumb"></div><div><i class="bar" style="width:35%"></i><i class="bar" style="width:80%;height:14px"></i><i class="bar" style="width:55%"></i></div></div></li>`).join('');
+    return;
+  }
+  if (S.note === 'fail') {
+    st.classList.add('err');
+    st.innerHTML = `<span>Couldn't reach the map database. Check your connection, then</span><button class="link" data-act="retry">try again</button>`;
+    list.innerHTML = '';
+    return;
+  }
+  const { list: items } = filtered();
+  const pop = S.spots.filter(s => s.popular).length;
+  st.innerHTML = S.note === 'fallback'
+    ? `<span>The OpenStreetMap server is busy, so these are Wikipedia landmarks within 10 km.</span><button class="link" data-act="retry">Retry full scan</button>`
+    : `<span><b>${S.spots.length}</b> spots within ${fmtRadius(S.radiusKm)} · ${pop} landmarks · ${S.spots.length - pop} hidden gems</span>`;
+  if (!items.length) {
+    list.innerHTML = `<li class="empty"><h3>Nothing here with these filters</h3>Try another category, or widen the radius.</li>`;
+    return;
+  }
+  list.innerHTML = items.slice(0, S.shown).map(cardHTML).join('');
+  observeThumbs(list);
+  if (items.length > S.shown) { more.hidden = false; more.textContent = `Show more spots (${items.length - S.shown} left)`; }
+}
+function renderSaved() {
+  const arr = Object.values(S.saved).sort((a, b) => b.savedAt - a.savedAt);
+  $('#savedCount').textContent = arr.length;
+  if (S.tab !== 'saved') return;
+  const st = $('#savedStatus'), list = $('#savedList');
+  if (!arr.length) {
+    st.innerHTML = '';
+    list.innerHTML = `<li class="empty"><h3>No saved spots yet</h3>Tap the bookmark on any spot to keep it here, along with your own notes. Saved spots stay in this browser.</li>`;
+    return;
+  }
+  st.innerHTML = `<span><b>${arr.length}</b> saved ${arr.length === 1 ? 'spot' : 'spots'}</span><button class="link" data-act="fitSaved">Show all on map</button>`;
+  list.innerHTML = arr.map(cardHTML).join('');
+  observeThumbs(list);
+}
+function renderExplore() {
+  renderLocline(); renderSun(); renderFilters(); renderStatusAndList(); renderMarkers();
+}
+
+/* ---------- map ---------- */
+let map, markerLayer, centerMarker, radiusCircle, hlRing;
+const markers = new Map();
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function initMap() {
+  const light = matchMedia('(prefers-color-scheme: light)').matches;
+  map = L.map('map', { zoomControl: false, preferCanvas: true, worldCopyJump: true }).setView([25, 0], 2);
+  const base = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${light ? 'light_all' : 'dark_all'}/{z}/{x}/{y}{r}.png`, { subdomains: 'abcd', maxZoom: 20, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>' });
+  const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics' });
+  const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { subdomains: 'abc', maxZoom: 17, attribution: '&copy; OpenStreetMap, SRTM | &copy; <a href="https://opentopomap.org">OpenTopoMap</a>' });
+  base.addTo(map);
+  L.control.layers({ Map: base, Satellite: sat, Terrain: topo }, null, { position: 'topright' }).addTo(map);
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  markerLayer = L.layerGroup().addTo(map);
+  map.on('dragend', () => {
+    if (!S.center || S.tab !== 'explore') return;
+    const c = map.getCenter();
+    $('#areaBtn').hidden = dist(S.center, { lat: c.lat, lon: c.lng }) < Math.max(800, S.radiusKm * 1000 * 0.3);
+  });
+  addEventListener('resize', () => map.invalidateSize());
+}
+function renderMarkers() {
+  if (!map) return;
+  markerLayer.clearLayers(); markers.clear();
+  const list = S.tab === 'saved' ? Object.values(S.saved) : filtered().list;
+  const ring = '#f3a43b';
+  for (const s of list) {
+    const c = (CATS[s.cat] || CATS.urban).color, sv = !!S.saved[s.id];
+    const m = L.circleMarker([s.lat, s.lon], { radius: sv ? 7.5 : 6, weight: sv ? 3 : 1.5, color: sv ? ring : 'rgba(0,0,0,.55)', fillColor: c, fillOpacity: .95 });
+    m.bindTooltip(esc(s.name), { className: 'vf-tip', direction: 'top', offset: [0, -7] });
+    m.on('click', () => openDetail(s.id));
+    m.addTo(markerLayer);
+    markers.set(s.id, m);
+  }
+}
+function drawCenter(fit = true) {
+  if (centerMarker) centerMarker.remove();
+  if (radiusCircle) radiusCircle.remove();
+  const ll = [S.center.lat, S.center.lon], acc = cssVar('--accent') || '#f3a43b';
+  centerMarker = L.marker(ll, { icon: L.divIcon({ className: '', html: `<div class="cpin">${ICON.cross}</div>`, iconSize: [34, 34], iconAnchor: [17, 17] }), interactive: false, keyboard: false }).addTo(map);
+  radiusCircle = L.circle(ll, { radius: S.radiusKm * 1000, color: acc, weight: 1.5, dashArray: '5 7', fillColor: acc, fillOpacity: .04, interactive: false }).addTo(map);
+  if (fit) map.fitBounds(radiusCircle.getBounds(), { padding: [16, 16] });
+  $('#areaBtn').hidden = true;
+}
+function highlight(id, on) {
+  const m = markers.get(id);
+  if (!m) return;
+  const sv = !!S.saved[id];
+  m.setRadius(on ? 10 : (sv ? 7.5 : 6));
+  if (on) m.bringToFront();
+}
+
+/* ---------- location ---------- */
+async function reverse(lat, lon) {
+  try {
+    const j = await fetchJSON(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=12&accept-language=${LANG}`);
+    const a = j.address || {};
+    const n = a.city || a.town || a.village || a.hamlet || a.suburb || a.county || a.state || j.name || '';
+    return [n, a.country].filter(Boolean).join(', ') || 'Dropped pin';
+  } catch { return 'Dropped pin'; }
+}
+function setCenter(lat, lon, name = '', opts = {}) {
+  S.center = { lat: +lat, lon: +lon }; S.place = name; S.mine = !!opts.mine; S.msg = null;
+  store.set('vf.last', { lat: S.center.lat, lon: S.center.lon, name, mine: S.mine });
+  if (S.tab !== 'explore') switchTab('explore');
+  drawCenter(opts.fit !== false);
+  loadSpots();
+  if (!name) reverse(lat, lon).then(n => {
+    if (S.center && S.center.lat === +lat && S.center.lon === +lon) {
+      S.place = n; store.set('vf.last', { lat: +lat, lon: +lon, name: n, mine: S.mine });
+      renderLocline(); if (S.loading) renderStatusAndList();
+    }
+  });
+}
+function geolocate() {
+  const btn = $('#locate');
+  if (!navigator.geolocation) { S.msg = "This browser can't share your location. Search for a place instead."; renderExplore(); return; }
+  btn.classList.add('busy');
+  navigator.geolocation.getCurrentPosition(p => {
+    btn.classList.remove('busy');
+    $('#q').value = '';
+    setCenter(p.coords.latitude, p.coords.longitude, '', { mine: true });
+  }, e => {
+    btn.classList.remove('busy');
+    const m = e.code === 1 ? 'Location access is blocked. Allow it in your browser settings, or search for a place.' : "Couldn't get your location. Search for a place or enter coordinates instead.";
+    if (S.center) toast(m); else { S.msg = m; renderExplore(); }
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 120000 });
+}
+
+/* ---------- search box ---------- */
+let sugTimer, sugItems = [], sugIdx = -1;
+function parseCoords(v) {
+  const m = v.match(/^\s*(-?\d{1,2}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if (!m) return null;
+  const lat = +m[1], lon = +m[2];
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? { lat, lon } : null;
+}
+function shortName(d) { const p = d.split(', '); return p.length > 2 ? `${p[0]}, ${p[p.length - 1]}` : d; }
+function showSugg(items, msg) {
+  const ul = $('#sugg');
+  sugItems = items; sugIdx = items.length ? 0 : -1;
+  if (!items.length && !msg) { ul.hidden = true; return; }
+  ul.innerHTML = items.length
+    ? items.map((it, i) => `<li role="option"><button data-sug="${i}" class="${i === 0 ? 'active' : ''}">${esc(it.label)}<small>${esc(it.sub)}</small></button></li>`).join('')
+    : `<li class="msg">${esc(msg)}</li>`;
+  ul.hidden = false;
+}
+const hideSugg = () => { $('#sugg').hidden = true; sugItems = []; sugIdx = -1; };
+async function geocode(v, pickFirst = false) {
+  try {
+    const j = await fetchJSON(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(v)}&accept-language=${LANG}`);
+    if ($('#q').value.trim() !== v) return;
+    const items = j.map(r => ({ label: r.name || r.display_name.split(',')[0], sub: r.display_name, lat: +r.lat, lon: +r.lon, name: shortName(r.display_name) }));
+    if (pickFirst && items[0]) return pickSugg(items[0]);
+    showSugg(items, `No places match “${v}”. Check the spelling or try a nearby town.`);
+  } catch {
+    showSugg([], 'Place search is unavailable right now. You can still enter coordinates, like 51.5007, -0.1246.');
+  }
+}
+function pickSugg(it) { hideSugg(); $('#q').value = it.name; $('#q').blur(); setCenter(it.lat, it.lon, it.name); }
+
+/* ---------- detail drawer ---------- */
+let dTok = 0, curImgs = [], curIdx = 0;
+const drawer = $('#detail');
+function linksHTML(s, wikiUrl) {
+  const ll = `${s.lat},${s.lon}`;
+  const near = (s.savedNear || S.place || '').split(',')[0];
+  const q = encodeURIComponent(s.unnamed ? `${s.type} near ${near || ll}` : `${s.name} ${near}`.trim());
+  const osm = `https://www.openstreetmap.org/${{ n: 'node', w: 'way', r: 'relation' }[s.id[0]] || 'node'}/${s.id.slice(1)}`;
+  return `<div class="links">
+    <a class="primary" href="https://www.google.com/maps/dir/?api=1&destination=${ll}" target="_blank" rel="noopener">${ICON.route}<span>Directions</span></a>
+    <a href="https://www.google.com/search?tbm=isch&q=${q}" target="_blank" rel="noopener">${ICON.images}<span>Google Images</span></a>
+    <a href="https://www.flickr.com/search/?lat=${s.lat}&lon=${s.lon}&radius=0.5&has_geo=1&view_all=1&sort=interestingness-desc" target="_blank" rel="noopener">${ICON.camera}<span>Flickr photos here</span></a>
+    ${wikiUrl ? `<a href="${esc(wikiUrl)}" target="_blank" rel="noopener">${ICON.book}<span>Wikipedia</span></a>` : `<a href="${s.id[0] === 'w' ? `https://www.google.com/maps/search/?api=1&query=${ll}` : osm}" target="_blank" rel="noopener">${ICON.map}<span>${s.id[0] === 'w' ? 'Google Maps' : 'OpenStreetMap'}</span></a>`}
+  </div>`;
+}
+function heroHTML(s, loading) {
+  const img = curImgs[curIdx];
+  const top = `<div class="dtop"><button class="round" data-act="close" aria-label="Close">${ICON.close}</button><button class="round" data-save="${esc(s.id)}" aria-pressed="${!!S.saved[s.id]}" aria-label="Bookmark this spot">${ICON.bookmark}</button></div>`;
+  if (img) return `${top}<img src="${esc(img.full)}" alt="${esc(s.name)}" data-act="zoom"><div class="credit">Photo: ${esc(img.artist)}${img.license ? ' · ' + esc(img.license) : ''} · <a href="${esc(img.page)}" target="_blank" rel="noopener">Wikimedia Commons</a></div>`;
+  return `${top}${ICON[s.cat] || ICON.urban}${loading ? '' : '<div class="nophoto">No openly licensed photos here yet. Try Google Images or Flickr below.</div>'}`;
+}
+function galleryHTML() {
+  if (curImgs.length < 2) return '';
+  const near = curImgs.some(i => i.src === 'near');
+  return `<div class="gallery" role="list">${curImgs.map((im, i) => `<button role="listitem" data-img="${i}" aria-current="${i === curIdx}" aria-label="Photo ${i + 1} by ${esc(im.artist)}"><img src="${esc(sized(im.thumb, 250))}" alt="" loading="lazy"></button>`).join('')}</div>
+    <div class="gcount">${curImgs.length} photos${near ? ` · includes shots taken within ${fmtDist(radiusFor(S.detail) * 2)}` : ''}</div>`;
+}
+function renderDetail(s, d = {}) {
+  const c = CATS[s.cat] || CATS.urban;
+  const t = s.tags, ele = parseFloat(t.ele);
+  const i = sunInfo(s.lat, s.lon);
+  const about = d.about ? `<p class="about">${esc(d.about)}</p>` : (d.loading ? `<p class="about dim">Loading details…</p>` : (t.description ? `<p class="about">${esc(t.description)}</p>` : ''));
+  drawer.style.setProperty('--c', c.color);
+  drawer.innerHTML = `
+    <div class="hero ${d.loading && !curImgs.length ? 'loading' : ''}">${heroHTML(s, d.loading)}</div>
+    ${galleryHTML()}
+    <div class="dbody">
+      <div>
+        <div class="eyebrow">${esc(s.type)} · ${esc(c.label)}</div>
+        <h2>${esc(s.name)}</h2>
+        ${s.alt ? `<p class="alt">${esc(s.alt)}</p>` : ''}
+        <div class="meta"><span class="badge ${s.popular ? 'pop' : 'gem'}">${s.popular ? 'Landmark' : 'Hidden gem'}</span>${s.unnamed ? '<span>Unnamed on the map</span>' : ''}</div>
+      </div>
+      <div class="facts">
+        <div><span class="lbl">Distance</span><b>${S.center ? placeDist(s) : '—'}</b></div>
+        <div><span class="lbl">Coordinates</span><button data-act="copy" title="Copy coordinates">${s.lat.toFixed(5)}, ${s.lon.toFixed(5)}</button></div>
+        <div><span class="lbl">${isNaN(ele) ? 'Photos' : 'Elevation'}</span><b>${isNaN(ele) ? (d.loading ? '…' : curImgs.length) : (S.unit === 'mi' ? Math.round(ele * 3.281).toLocaleString() + ' ft' : Math.round(ele).toLocaleString() + ' m')}</b></div>
+      </div>
+      ${about}
+      <div class="box tip"><span class="lbl">Shooting notes</span><p>${esc(tipFor(s))}</p></div>
+      ${i ? `<div class="box"><span class="lbl">Light here today · ${esc(nextLight(i))}</span>${sunRows(i)}</div>` : ''}
+      ${linksHTML(s, d.wikiUrl)}
+      ${S.saved[s.id] ? `<div class="box"><label class="lbl" for="note">Your notes</label><textarea id="note" placeholder="Best time, parking, the angle you want to try…">${esc(S.saved[s.id].note || '')}</textarea></div>` : ''}
+      <p class="credits">Photos by Wikimedia Commons contributors, shown under their stated licenses; tap a photo's credit for details. Place data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors${d.wikiUrl ? ', description from Wikipedia' : ''}.</p>
+    </div>`;
+}
+async function openDetail(id) {
+  const s = S.index.get(id) || S.saved[id];
+  if (!s) return;
+  const tok = ++dTok;
+  S.detail = s; curImgs = []; curIdx = 0;
+  renderDetail(s, { loading: true });
+  drawer.scrollTop = 0;
+  drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false');
+  $('#scrim').classList.add('on');
+  focusMap(s);
+
+  const t = s.tags;
+  let lang = 'en', title = null, p18 = null, ccat = /^Category:/i.test(t.wikimedia_commons || '') ? t.wikimedia_commons.slice(9) : null, wdDesc = '';
+  if (t.wikipedia) { const m = t.wikipedia.match(/^([a-z-]{2,12}):(.+)$/); if (m) { lang = m[1]; title = m[2]; } else title = t.wikipedia; }
+  if (t.wikidata) {
+    try {
+      const e = await wdEntity(t.wikidata);
+      p18 = claim(e, 'P18'); ccat = ccat || claim(e, 'P373'); wdDesc = e?.descriptions?.en?.value || '';
+      if (!title && e?.sitelinks?.enwiki) { title = e.sitelinks.enwiki.title; lang = 'en'; }
+    } catch {}
+  }
+  if (tok !== dTok) return;
+  const names = [...new Set([fileFromTags(t), p18].filter(Boolean))];
+  const [sumR, filesR, catR, nearR] = await Promise.allSettled([
+    title ? wikiSummary(lang, title) : Promise.resolve(null),
+    names.length ? commonsFiles(names, 1280) : Promise.resolve([]),
+    ccat ? commonsCategory(ccat, 16, 1280) : Promise.resolve([]),
+    commonsNear(s.lat, s.lon, radiusFor(s) * 2, 24, 1280)
+  ]);
+  if (tok !== dTok) return;
+  const sum = sumR.status === 'fulfilled' ? sumR.value : null;
+  const seen = new Set();
+  for (const r of [filesR, catR, nearR]) {
+    if (r.status !== 'fulfilled') continue;
+    for (const im of r.value) if (!seen.has(im.title)) { seen.add(im.title); curImgs.push(im); }
+  }
+  curImgs = curImgs.slice(0, 30);
+  if (!curImgs.length && sum?.originalimage?.source) {
+    curImgs.push({ title: 'wiki', thumb: sum.thumbnail?.source || sum.originalimage.source, full: sum.originalimage.source, page: sum.content_urls?.desktop?.page || '#', artist: 'via Wikipedia', license: '', src: 'tagged' });
+  }
+  const about = (sum?.extract && sum.type !== 'disambiguation') ? sum.extract : (t.description || (wdDesc ? wdDesc.replace(/^./, c => c.toUpperCase()) + '.' : ''));
+  renderDetail(s, { about, wikiUrl: sum?.content_urls?.desktop?.page || null });
+}
+function focusMap(s) {
+  const z = Math.max(map.getZoom(), 14);
+  let target = L.latLng(s.lat, s.lon);
+  if (innerWidth > 820) { const p = map.project(target, z); p.x += drawer.offsetWidth / 2; target = map.unproject(p, z); }
+  map.flyTo(target, z, { duration: .7 });
+  if (hlRing) hlRing.remove();
+  hlRing = L.circleMarker([s.lat, s.lon], { radius: 15, weight: 2.5, color: cssVar('--accent') || '#f3a43b', fill: false, interactive: false }).addTo(map);
+}
+function closeDetail() {
+  if (!drawer.classList.contains('open')) return;
+  dTok++;
+  drawer.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true');
+  $('#scrim').classList.remove('on');
+  if (hlRing) { hlRing.remove(); hlRing = null; }
+  S.detail = null;
+}
+
+/* ---------- lightbox ---------- */
+function openLB(i) {
+  curIdx = i;
+  const im = curImgs[i], lb = $('#lb');
+  if (!im) return;
+  lb.hidden = false;
+  lb.innerHTML = `<div class="stage">
+      <img src="${esc(im.full)}" alt="Photo ${i + 1} of ${esc(S.detail?.name || '')}">
+      <button class="round x" data-lb="close" aria-label="Close photo">${ICON.close}</button>
+      ${curImgs.length > 1 ? `<button class="round nav prev" data-lb="prev" aria-label="Previous photo">${ICON.chevL}</button><button class="round nav next" data-lb="next" aria-label="Next photo">${ICON.chevR}</button>` : ''}
+    </div>
+    <div class="cap"><span class="mono">${i + 1} / ${curImgs.length}</span> · Photo: ${esc(im.artist)}${im.license ? ' · ' + esc(im.license) : ''} · <a href="${esc(im.page)}" target="_blank" rel="noopener">View on Wikimedia Commons</a></div>`;
+}
+const closeLB = () => { $('#lb').hidden = true; $('#lb').innerHTML = ''; if (S.detail) renderHeroOnly(); };
+function stepLB(d) { if (curImgs.length) openLB((curIdx + d + curImgs.length) % curImgs.length); }
+function renderHeroOnly() {
+  const s = S.detail; if (!s) return;
+  $('.hero', drawer).innerHTML = heroHTML(s, false);
+  $$('.gallery button', drawer).forEach(b => b.setAttribute('aria-current', +b.dataset.img === curIdx));
+}
+
+/* ---------- bookmarks ---------- */
+function toggleSave(id) {
+  if (S.saved[id]) { delete S.saved[id]; toast('Removed from saved'); }
+  else {
+    const s = S.index.get(id) || (S.detail && S.detail.id === id ? S.detail : null);
+    if (!s) return;
+    const { dist: _d, score: _s, ...rest } = s;
+    S.saved[id] = { ...rest, note: '', savedAt: Date.now(), savedNear: S.place || '' };
+    toast('Saved');
+  }
+  store.set('vf.saved', S.saved);
+  $$(`[data-save="${CSS.escape(id)}"]`).forEach(b => { b.setAttribute('aria-pressed', !!S.saved[id]); b.setAttribute('aria-label', S.saved[id] ? 'Remove bookmark' : 'Bookmark this spot'); });
+  renderSaved(); renderMarkers();
+  if (S.detail && S.detail.id === id) {
+    const body = $('.dbody', drawer), hasNote = !!$('#note', drawer);
+    if (!!S.saved[id] !== hasNote && body) {
+      const scroll = drawer.scrollTop;
+      const about = $('.about', drawer)?.textContent || '';
+      const wiki = $$('.links a', drawer).find(a => /wikipedia\.org/.test(a.href))?.href || null;
+      renderDetail(S.detail, { about, wikiUrl: wiki });
+      drawer.scrollTop = scroll;
+    }
+  }
+}
+function switchTab(tab) {
+  S.tab = tab;
+  $('#tab-explore').setAttribute('aria-selected', tab === 'explore');
+  $('#tab-saved').setAttribute('aria-selected', tab === 'saved');
+  $('#explore').hidden = tab !== 'explore';
+  $('#savedView').hidden = tab !== 'saved';
+  $('#areaBtn').hidden = true;
+  renderSaved(); renderMarkers();
+  if (tab === 'saved') fitSaved();
+}
+function fitSaved() {
+  const arr = Object.values(S.saved);
+  if (!arr.length) return;
+  if (arr.length === 1) map.flyTo([arr[0].lat, arr[0].lon], 13, { duration: .6 });
+  else map.fitBounds(L.latLngBounds(arr.map(s => [s.lat, s.lon])), { padding: [40, 40], maxZoom: 14 });
+}
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 2200); }
+
+/* ---------- events ---------- */
+function bind() {
+  const q = $('#q');
+  q.addEventListener('input', () => {
+    clearTimeout(sugTimer);
+    const v = q.value.trim(), co = parseCoords(v);
+    if (co) return showSugg([{ label: 'Go to coordinates', sub: `${co.lat.toFixed(5)}, ${co.lon.toFixed(5)}`, lat: co.lat, lon: co.lon, name: `${co.lat.toFixed(4)}, ${co.lon.toFixed(4)}` }]);
+    if (v.length < 3) return hideSugg();
+    sugTimer = setTimeout(() => geocode(v), 400);
+  });
+  q.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!sugItems.length) return;
+      e.preventDefault();
+      sugIdx = (sugIdx + (e.key === 'ArrowDown' ? 1 : -1) + sugItems.length) % sugItems.length;
+      $$('#sugg button').forEach((b, i) => b.classList.toggle('active', i === sugIdx));
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (sugItems[sugIdx]) pickSugg(sugItems[sugIdx]);
+      else if (q.value.trim().length > 1) { clearTimeout(sugTimer); geocode(q.value.trim(), true); }
+    } else if (e.key === 'Escape') hideSugg();
+  });
+  $('#sugg').addEventListener('mousedown', e => { const b = e.target.closest('[data-sug]'); if (b) { e.preventDefault(); pickSugg(sugItems[+b.dataset.sug]); } });
+  q.addEventListener('blur', () => setTimeout(hideSugg, 150));
+  $('#locate').addEventListener('click', geolocate);
+
+  const r = $('#radius');
+  r.value = S.radiusKm; $('#radiusOut').textContent = fmtRadius(S.radiusKm);
+  r.addEventListener('input', () => { S.radiusKm = +r.value; $('#radiusOut').textContent = fmtRadius(S.radiusKm); if (radiusCircle) radiusCircle.setRadius(S.radiusKm * 1000); });
+  r.addEventListener('change', () => { store.set('vf.radius', S.radiusKm); if (S.center) { drawCenter(true); loadSpots(); } });
+  const setUnit = u => {
+    S.unit = u; store.set('vf.unit', u);
+    $('#u-km').setAttribute('aria-pressed', u === 'km'); $('#u-mi').setAttribute('aria-pressed', u === 'mi');
+    $('#radiusOut').textContent = fmtRadius(S.radiusKm);
+    renderStatusAndList(); renderSaved();
+    if (S.detail) { const sc = drawer.scrollTop; openDetail(S.detail.id).then(() => drawer.scrollTop = sc); }
+  };
+  $('#u-km').addEventListener('click', () => setUnit('km'));
+  $('#u-mi').addEventListener('click', () => setUnit('mi'));
+  setUnit(S.unit);
+
+  $('#tab-explore').addEventListener('click', () => switchTab('explore'));
+  $('#tab-saved').addEventListener('click', () => switchTab('saved'));
+
+  $('#chips').addEventListener('click', e => {
+    const b = e.target.closest('[data-cat]'); if (!b) return;
+    const k = b.dataset.cat;
+    if (!k) S.cats.clear(); else S.cats.has(k) ? S.cats.delete(k) : S.cats.add(k);
+    S.shown = 60; renderFilters(); renderStatusAndList(); renderMarkers();
+  });
+  $$('.seg button').forEach(b => b.addEventListener('click', () => { S.kind = b.dataset.kind; S.shown = 60; renderFilters(); renderStatusAndList(); renderMarkers(); }));
+  $('#sort').addEventListener('change', e => { S.sort = e.target.value; renderStatusAndList(); });
+  $('#more').addEventListener('click', () => { S.shown += 60; renderStatusAndList(); });
+
+  const scroll = $('#scroll');
+  scroll.addEventListener('click', e => {
+    const sv = e.target.closest('[data-save]'); if (sv) return toggleSave(sv.dataset.save);
+    const op = e.target.closest('[data-open]'); if (op) return openDetail(op.dataset.open);
+    const pk = e.target.closest('[data-pick]'); if (pk) { const [la, lo] = pk.dataset.pick.split(','); $('#q').value = pk.dataset.name; return setCenter(+la, +lo, pk.dataset.name); }
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'locate') geolocate();
+    else if (act === 'retry') { resultCache.clear(); loadSpots(); }
+    else if (act === 'fitSaved') fitSaved();
+  });
+  scroll.addEventListener('mouseover', e => { const c = e.target.closest('.card[data-id]'); if (c) highlight(c.dataset.id, true); });
+  scroll.addEventListener('mouseout', e => { const c = e.target.closest('.card[data-id]'); if (c && !c.contains(e.relatedTarget)) highlight(c.dataset.id, false); });
+
+  $('#areaBtn').addEventListener('click', () => { const c = map.getCenter(); $('#q').value = ''; setCenter(c.lat, c.lng, '', { fit: true }); });
+
+  drawer.addEventListener('click', e => {
+    const sv = e.target.closest('[data-save]'); if (sv) return toggleSave(sv.dataset.save);
+    const im = e.target.closest('[data-img]'); if (im) { curIdx = +im.dataset.img; return renderHeroOnly(); }
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (act === 'close') closeDetail();
+    else if (act === 'zoom') openLB(curIdx);
+    else if (act === 'copy' && S.detail) {
+      const txt = `${S.detail.lat.toFixed(6)}, ${S.detail.lon.toFixed(6)}`;
+      try { navigator.clipboard.writeText(txt).then(() => toast('Coordinates copied'), () => toast(txt)); } catch { toast(txt); }
+    }
+  });
+  let noteT;
+  drawer.addEventListener('input', e => {
+    if (e.target.id !== 'note' || !S.detail || !S.saved[S.detail.id]) return;
+    S.saved[S.detail.id].note = e.target.value;
+    clearTimeout(noteT);
+    noteT = setTimeout(() => { store.set('vf.saved', S.saved); if (S.tab === 'saved') renderSaved(); }, 400);
+  });
+  $('#scrim').addEventListener('click', closeDetail);
+  $('#lb').addEventListener('click', e => {
+    const a = e.target.closest('[data-lb]')?.dataset.lb;
+    if (a === 'close') closeLB(); else if (a === 'prev') stepLB(-1); else if (a === 'next') stepLB(1);
+    else if (e.target.classList.contains('stage')) closeLB();
+  });
+  let tx = null;
+  $('#lb').addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, { passive: true });
+  $('#lb').addEventListener('touchend', e => { if (tx == null) return; const dx = e.changedTouches[0].clientX - tx; if (Math.abs(dx) > 50) stepLB(dx < 0 ? 1 : -1); tx = null; });
+  addEventListener('keydown', e => {
+    if (!$('#lb').hidden) { if (e.key === 'Escape') closeLB(); else if (e.key === 'ArrowRight') stepLB(1); else if (e.key === 'ArrowLeft') stepLB(-1); return; }
+    if (e.key === 'Escape') closeDetail();
+  });
+  setInterval(() => { if (S.center && !document.hidden) renderSun(); }, 60000);
+}
+
+/* ---------- boot ---------- */
+function boot() {
+  if (!window.L) { document.body.innerHTML = '<p style="padding:24px">The map library failed to load. Check your internet connection and reload.</p>'; return; }
+  initMap(); bind();
+  renderSaved(); renderExplore();
+  const last = store.get('vf.last', null);
+  if (last && isFinite(last.lat)) setCenter(last.lat, last.lon, last.name || '', { mine: last.mine });
+  else geolocate();
+}
+boot();
+})();
+</script>
+</body>
+</html>
